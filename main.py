@@ -26,26 +26,91 @@ def setup_logging(repo_dir: Path):
     root.addHandler(sh)
     root.addHandler(fh)
 
-def http_get(host: str, port: int, request: str, timeout: float = 10.0) -> str:
+def http_get(host: str, port: int, path: str, timeout: float = 10.0) -> tuple[int, dict, str]:
+    req = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}\r\n"
+        f"Connection: close\r\n"
+        f"Accept: application/json\r\n"
+        f"User-Agent: daily-journal-sync/1.0\r\n"
+        f"\r\n"
+    )
     with socket.create_connection((host, port), timeout=timeout) as sock:
-        sock.sendall(request.encode("ascii"))
-        chunks = []
+        sock.sendall(req.encode("ascii"))
+        buf = bytearray()
         while True:
             data = sock.recv(4096)
-            if not data: break
-            chunks.append(data)
-    return b"".join(chunks).decode("utf-8", errors="ignore")
+            if not data:
+                break
+            buf.extend(data)
 
-def fetch_weather(lat: float, lon: float):
+    raw = bytes(buf).decode("utf-8", errors="ignore")
+
+    if "\r\n\r\n" not in raw:
+        return 0, {}, ""
+    head, body = raw.split("\r\n\r\n", 1)
+
+    lines = head.split("\r\n")
+    status_line = lines[0]
+    try:
+        _proto, status_code_str, *_ = status_line.split(" ", 2)
+        status_code = int(status_code_str)
+    except Exception:
+        status_code = 0
+
+    headers = {}
+    for ln in lines[1:]:
+        if ":" in ln:
+            k, v = ln.split(":", 1)
+            headers[k.strip().lower()] = v.strip()
+
+    if headers.get("transfer-encoding", "").lower() == "chunked":
+        body = _dechunk(body)
+
+    return status_code, headers, body
+
+
+def _dechunk(s: str) -> str:
+    i = 0
+    out = []
+    slen = len(s)
+    while True:
+        j = s.find("\r\n", i)
+        if j == -1:
+            break
+        chunk_len_hex = s[i:j].strip()
+        try:
+            n = int(chunk_len_hex, 16)
+        except ValueError:
+            break
+        i = j + 2
+        if n == 0:
+            break
+        out.append(s[i:i+n])
+        i += n
+
+        if s[i:i+2] == "\r\n":
+            i += 2
+    return "".join(out)
+
+
+def fetch_weather(lat: float, lon: float) -> dict | None:
+
     host = "api.open-meteo.com"
     path = f"/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
-    req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAccept: application/json\r\n\r\n")
     try:
-        raw = http_get(host, 80, req, timeout=10)
-        body = raw.split("\r\n\r\n", 1)[1]
+        status, headers, body = http_get(host, 80, path, timeout=12)
+        if status != 200:
+            logging.getLogger("weather").warning(f"weather HTTP status {status}; headers={headers}")
+            return None
         data = json.loads(body)
         cw = data.get("current_weather") or {}
-        return {"temperature": cw.get("temperature"), "windspeed": cw.get("windspeed"), "time": cw.get("time")}
+        return {
+            "temperature": cw.get("temperature"),
+            "windspeed": cw.get("windspeed"),
+            "weathercode": cw.get("weathercode"),
+            "time": cw.get("time"),
+        }
     except Exception as e:
         logging.getLogger("weather").warning(f"weather fetch failed: {e}")
         return None
@@ -110,6 +175,9 @@ def writer_loop(repo_dir: Path, with_weather: bool, lat: float, lon: float, q: m
                 md_path = today_path
                 write_header_if_new(md_path, with_weather, lat, lon)
                 log.info(f"new day -> switching to {md_path}")
+                
+            if not md_path.exists():
+                write_header_if_new(md_path, with_weather, lat, lon)
             append_entry(md_path, m)
             log.info(f"appended entry: {m!r}")
             if md_path.stat().st_size >= SIZE_LIMIT:
