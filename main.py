@@ -162,7 +162,7 @@ def add_note(args):
 def build_parser():
     p = argparse.ArgumentParser(
         prog="daily-journal-sync", 
-        description="Tiny queue-based journaling with socket weather + GitHub push"
+        description="Tiny queue-based journaling with weather + GitHub push"
         )
     sub = p.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("start", help="start the background service (daemon-like)")
