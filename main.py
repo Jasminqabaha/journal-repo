@@ -123,9 +123,10 @@ def writer_loop(repo_dir: Path, with_weather: bool, lat: float, lon: float, q: m
             break
         except Exception as e:
             log.exception(f"writer error: {e}")
+            
 
 def start_daemon(args):
-    repo_dir = Path(args.repo).expanduser().resolve()
+    repo_dir = Path(args.repo).expanduser().resolve() 
     if not repo_dir.exists():
         print(f"repo path not found: {repo_dir}", file=sys.stderr)
         sys.exit(1)
@@ -165,10 +166,10 @@ def build_parser():
         description="Tiny queue-based journaling with weather + GitHub push"
         )
     sub = p.add_subparsers(dest="cmd", required=True)
-    sp = sub.add_parser("start", help="start the background service (daemon-like)")
+    sp = sub.add_parser("start", help="start the background service")
     sp.add_argument("--repo", required=True, help="path to your journal repo (will contain entries/ and logs/)")
     sp.add_argument("--with-weather", action="store_true", help="include current weather in daily header")
-    sp.add_argument("--lat", type=float, default=31.5326, help="latitude for weather (default: Hebron area)")
+    sp.add_argument("--lat", type=float, default=31.5326, help="latitude for weather")
     sp.add_argument("--lon", type=float, default=35.0998, help="longitude for weather")
     sp.set_defaults(func=start_daemon)
     ap = sub.add_parser("add", help="add a journal note via the running service")
